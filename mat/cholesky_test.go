@@ -924,3 +924,71 @@ func TestBandCholeskyDet(t *testing.T) {
 		}
 	}
 }
+
+func TestPivotedCholesky(t *testing.T) {
+	t.Parallel()
+
+	const tol = 1e-14
+	src := rand.NewSource(1)
+	for _, n := range []int{1, 2, 3, 4, 5, 10} {
+		for _, rank := range []int{int(0.3 * float64(n)), int(0.7 * float64(n)), n} {
+			name := fmt.Sprintf("n=%d, rank=%d", n, rank)
+
+			// Generate a random symmetric semi-definite matrix A with the given rank.
+			a := NewSymDense(n, nil)
+			for i := 0; i < rank; i++ {
+				x := randVecDense(n, 1, 1, src)
+				a.SymRankOne(a, 1, x)
+			}
+
+			// Compute the pivoted Cholesky factorization of A.
+			var chol PivotedCholesky
+			ok := chol.Factorize(a)
+
+			// Check that the ok return matches the rank of A.
+			if !ok && rank == n {
+				t.Errorf("%s: unexpected factorization failure with full rank", name)
+			}
+			if ok && rank != n {
+				t.Errorf("%s: unexpected factorization success with deficit rank", name)
+			}
+
+			// Check that the computed rank matches the rank of A.
+			if chol.Rank() != rank {
+				t.Errorf("%s: unexpected computed rank, got %d", name, chol.Rank())
+			}
+
+			// Check that the factorization is not empty.
+			if chol.IsEmpty() {
+				t.Errorf("%s: factorization is empty", name)
+			}
+
+			// Check the size.
+			r, c := chol.Dims()
+			if r != n || c != n {
+				t.Errorf("n=%d, rank=%d: unexpected dims: r=%d, c=%d", n, rank, r, c)
+			}
+			if chol.SymmetricDim() != n {
+				t.Errorf("n=%d, rank=%d: unexpected symmetric dim: dim=%d", n, rank, chol.SymmetricDim())
+			}
+
+			// Compute the norm of the difference |P*Uᵀ*U*Pᵀ - A|.
+			diff := NewDense(n, n, nil)
+			for i := 0; i < n; i++ {
+				for j := 0; j < n; j++ {
+					diff.Set(i, j, chol.At(i, j)-a.At(i, j))
+				}
+			}
+			res := Norm(diff, 1)
+			if res > tol {
+				t.Errorf("n=%d, rank=%d: unexpected result (|diff|=%v)\ndiff = %.4g", n, rank, res, Formatted(diff, Prefix("       ")))
+			}
+
+			// Check that after a Reset the factorization is empty.
+			chol.Reset()
+			if !chol.IsEmpty() {
+				t.Errorf("%s: factorization is not empty after reset", name)
+			}
+		}
+	}
+}
